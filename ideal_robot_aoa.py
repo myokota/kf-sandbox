@@ -5,11 +5,10 @@
 
 
 import matplotlib
-matplotlib.use('nbagg')
 import matplotlib.animation as anm
 import matplotlib.pyplot as plt
-import math
 import matplotlib.patches as patches
+import math
 import numpy as np
 
 

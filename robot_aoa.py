@@ -4,10 +4,8 @@
 # In[1]:
 
 
-import sys
-sys.path.append('.')
-from ideal_robot_aoa import *
 from scipy.stats import expon, norm, uniform
+from ideal_robot_aoa import *
 
 
 # In[2]:
