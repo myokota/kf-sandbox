@@ -15,21 +15,34 @@ from robot_aoa import *
 
 
 class EstimationAgent(Agent): 
-    def __init__(self, time_interval, nu, omega, estimator):
-        super().__init__(nu, omega)
+    def __init__(self, time_interval, cmds, estimator):
+        super().__init__(0, 0)
         self.estimator = estimator
         self.time_interval = time_interval
         
-        self.prev_nu = 0.0
-        self.prev_omega = 0.0
+        self.prev_nu = 0
+        self.prev_omega = 0
+
+        self.cmds = cmds
+        self.cmd_step = 0
         
     # observasion: data from the sensors
     # self.{nu,omega}: movement
     def decision(self, observation=None): 
         self.estimator.motion_update(self.prev_nu, self.prev_omega, self.time_interval)
-        self.prev_nu, self.prev_omega = self.nu, self.omega
+
+        if len(self.cmds) == 0:
+            self.cmds.append([1, 0, 0])
+
+        steps, nu, omega = self.cmds[0]
+        if steps < self.cmd_step:
+            steps, nu, omega = self.cmds.pop(0)
+            self.cmd_step = 0
+        self.cmd_step += 1
+
+        self.prev_nu, self.prev_omega = nu, omega
         self.estimator.observation_update(observation)
-        return self.nu, self.omega
+        return nu, omega
         
     def draw(self, ax, elems): ###mlwrite
         self.estimator.draw(ax, elems)
@@ -158,6 +171,8 @@ class EstimatorUKF:
 
 # In[10]:
 
+def d2r(degree):
+    return degree/180*math.pi
 
 if __name__ == '__main__': 
     dt = 0.1
@@ -169,11 +184,15 @@ if __name__ == '__main__':
     m.append_antenna(Antenna(9.5, 0.5))
     world.append(m)        
     
-    #pose, nu, omega = np.array([2, 4, 0]), 0.2, 0.0
-    pose, nu, omega = np.array([5, 3, 0]), 0.2, 5.0/180*math.pi
+    pose = np.array([2, 2, 0])
+    cmds = [[100, 0.4, 0.0],
+            [100, 0.2, d2r(10.0)],
+            [100, 0.4, 0.0],
+            [100, 0.2, d2r(10.0)],
+            [100, 0.4, 0.0]]
     
     e = EstimatorUKF(m, dt, pose)
-    a = EstimationAgent(dt, nu, omega, e)
+    a = EstimationAgent(dt, cmds, e)
     r = Robot(pose, sensor=AoA(m), agent=a, color="red") 
     
     world.append(r)

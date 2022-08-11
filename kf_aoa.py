@@ -7,7 +7,6 @@
 from filterpy.kalman import KalmanFilter
 from filterpy.common import Q_discrete_white_noise
 from robot_aoa import *
-matplotlib.use('nbagg')
 
 
 # In[7]:
