@@ -171,9 +171,6 @@ class EstimatorUKF:
 
 # In[10]:
 
-def d2r(degree):
-    return degree/180*math.pi
-
 if __name__ == '__main__': 
     dt = 0.1
     #world = World(60, dt, debug=True)  
@@ -185,12 +182,15 @@ if __name__ == '__main__':
     world.append(m)        
     
     pose = np.array([2, 2, 0])
+    # cmds = [[steps, nu, omega] * n]
     cmds = [[100, 0.4, 0.0],
-            [100, 0.2, d2r(10.0)],
+            [100, 0.2, 10.0],
             [100, 0.4, 0.0],
-            [100, 0.2, d2r(10.0)],
+            [100, 0.2, 10.0],
+            [100, 0.0, 0.0],
             [100, 0.4, 0.0]]
-    
+    cmds = [[s, n, math.radians(o)] for s, n, o in cmds]
+
     e = EstimatorUKF(m, dt, pose)
     a = EstimationAgent(dt, cmds, e)
     r = Robot(pose, sensor=AoA(m), agent=a, color="red") 
