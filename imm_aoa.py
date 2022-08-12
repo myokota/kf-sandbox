@@ -1,18 +1,13 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[6]:
-
-
+import copy
 from math import sin, cos, tan, atan2, sqrt
-from filterpy.kalman import MerweScaledSigmaPoints
-from filterpy.kalman import UnscentedKalmanFilter as UKF
-from filterpy.common import Q_discrete_white_noise
+from filterpy.kalman import KalmanFilter
+from filterpy.kalman import IMMEstimator
 from robot_aoa import *
-
-
-# In[7]:
-
+from scipy.linalg import block_diag
+import numpy as np
 
 class EstimationAgent(Agent): 
     def __init__(self, time_interval, cmds, estimator):
@@ -51,117 +46,97 @@ class EstimationAgent(Agent):
         #s = "({:.2f}, {:.2f}, {})".format(x,y,int(t*180/math.pi)%360)
         #elems.append(ax.text(x, y+0.1, s, fontsize=8))
 
+def line_cross_point(P0, P1, Q0, Q1):
+    x0, y0 = P0; x1, y1 = P1
+    x2, y2 = Q0; x3, y3 = Q1
+    a0 = x1 - x0; b0 = y1 - y0
+    a2 = x3 - x2; b2 = y3 - y2
 
-# In[8]:
+    d = a0*b2 - a2*b0
+    if d == 0:
+        # two lines are parallel
+        return None
 
+    # s = sn/d
+    sn = b2 * (x2-x0) - a2 * (y2-y0)
+    # t = tn/d
+    #tn = b0 * (x2-x0) - a0 * (y2-y0)
+    return x0 + a0*sn/d, y0 + b0*sn/d
 
-def move(x, dt, u):
-    return IdealRobot.state_transition(u[0], u[1], dt, x)
-
-def normalize_angle(x):
-    x = x % (2 * np.pi)    # x を [0, 2 pi) の範囲に変換する。
-    if x > np.pi:          # x を [-pi, pi) に移す。
-        x -= 2 * np.pi
-    return x
-
-def residual_h(a, b):
-    y = a - b
-    return [normalize_angle(_y) for _y in y]
-
-def residual_x(a, b):
-    y = a - b
-    y[2] = normalize_angle(y[2])
-    return y
-
-# 状態変数を観測値に変換
-def Hx(x, antennas):
-    hx = []
-    for atn in antennas:
-        ax, ay = atn.pos
-        angle = atan2(x[1] - ay, x[0] - ax)
-        hx.extend([angle])
+class EstimatorIMME:
+    def __init__(self, envmap, dt, init_pose):
         
-    return np.array(hx)
-
-def state_mean(sigmas, Wm):
-    x = np.zeros(3)
-    sum_sin = np.sum(np.dot(np.sin(sigmas[:, 2]), Wm))
-    sum_cos = np.sum(np.dot(np.cos(sigmas[:, 2]), Wm))
-    x[0] = np.sum(np.dot(sigmas[:, 0], Wm))
-    x[1] = np.sum(np.dot(sigmas[:, 1], Wm))
-    x[2] = atan2(sum_sin, sum_cos)
-    return x
-
-def z_mean(sigmas, Wm):
-    z_count = sigmas.shape[1]
-    x = np.zeros(z_count)
-    for z in range(len(x)):
-        sum_sin = np.sum(np.dot(np.sin(sigmas[:, z]), Wm))
-        sum_cos = np.sum(np.dot(np.cos(sigmas[:, z]), Wm))
-        x[z] = atan2(sum_sin, sum_cos)
-
-    return x
-
-
-# In[9]:
-
-
-# Estimator
-class EstimatorUKF:
-    def __init__(self, envmap, dt, init_pose, sigma_bearing=0.1):
-        points = MerweScaledSigmaPoints(n=3, alpha=.00001, beta=2, kappa=0,
-                                    subtract=residual_x)
-        ukf = UKF(dim_x=3, dim_z=1*len(envmap.antennas), fx=move, hx=Hx,
-                  dt=dt, points=points, x_mean_fn=state_mean,
-                  z_mean_fn=z_mean, residual_x=residual_x,
-                  residual_z=residual_h)
-
-        #ukf.x = np.array([2, 6, .3])
-        ukf.x = init_pose
-        ukf.P = np.diag([.1, .1, .05])
-        ukf.R = np.diag([sigma_bearing**2]*len(envmap.antennas))
-        ukf.Q = np.eye(3)*0.0001
+        r = 1
+        ca = KalmanFilter(6, 2)
+        dt2 = (dt**2)/2
+        F = np.array([[1, dt, dt2],
+                      [0,  1,  dt],
+                      [0,  0,   1]])
         
-        self.pose = ukf.x
-        self.ukf = ukf  
-        self.estimated_poses = [ukf.x]
+        ca.F = block_diag(F, F)
+        #ca.x = np.array([init_pose[0], 0, 0, init_pose[1], -15, 0]).T
+        ca.x = np.array([init_pose[0], 0, 0, init_pose[1], 0, 0]).T
+        ca.P *= 1.e-12
+        ca.R *= r**2
+        q = np.array([[.05, .125, 1/6],
+                      [.125, 1/3, .5],
+                      [1/6, .5, 1]])*1.e-3
+        ca.Q = block_diag(q, q)
+        ca.H = np.array([[1, 0, 0, 0, 0, 0],
+                         [0, 0, 0, 1, 0, 0]])
+        
+        # プロセスノイズを持たない同じフィルタを作成する。
+        cano = copy.deepcopy(ca)
+        cano.Q *= 0
+        filters = [ca, cano]
+        
+        M = np.array([[0.97, 0.03],
+                      [0.03, 0.97]])
+        mu = np.array([0.5, 0.5])
+        bank = IMMEstimator(filters, mu, M)
+
+        self.bank = bank
+        self.pose = init_pose
+        self.estimated_poses = []
         self.antennas = envmap.antennas
+
         
     def motion_update(self, nu, omega, time): #追加
         #値が0になるとゼロ割りになって計算ができないのでわずかに値を持たせる
         if abs(omega) < 1e-5: 
             omega = 1e-5
 
-        self.ukf.predict(u=[nu, omega])
-        self.pose = self.ukf.x
+        self.bank.predict()
         
-    #
-    # Agent から呼ばれる
-    # observasion はノイズを含むセンサからの観測値
-    #    (z, ant.pos, ant.id) = robot.AoA.data()
-    #         # 以下の理想的な値にノイズを載せたものが上記観測値となる
-    #         z = IdealAoA.observation_function()
-    #         # 観測値zの内訳は以下の通りで、0 は位置情報でありセンサデータとして未使用
-    #         np.array([0, theta]).T
-    #
+        #  pose = [x, y, theta]
+        pose = np.array([self.bank.x[0], self.bank.x[3], self.pose[2]]).T
+        self.pose = IdealRobot.state_transition(nu, omega, time, pose)
+        
     def observation_update(self, observation):  #追加
         # observation[]: [(0, 角度), アンテナ位置, 観測ID]
-        #    z = d[0][1] # d[0] = (0, 角度)
+        #    z = d[0][1] # d[0] = (0, theta)
         #    ant_pos = d[1]
         #    obs_id = d[2]
         ant1 =observation[0] 
         ant2 =observation[1] 
         z1 = ant1[0][1]
         z2 = ant2[0][1]
-        
-        self.ukf.update([z1, z2], antennas=self.antennas)
+        a1 = math.tan(z1)
+        a2 = math.tan(z2)
+        p1 = ant1[1]
+        p2 = ant2[1]
+        x1 = 10
+        x2 = 0
+        c = line_cross_point((p1[0], p1[1]), (x1, a1*x1+a1*-p1[0]+p1[1]),
+                             (p2[0], p2[1]), (x2, a2*x2+a2*-p2[0]+p2[1]))   
+        self.bank.update([c[0], c[1]])
         
     def draw(self, ax, elems):
-        x = self.ukf.x
+        x = [self.bank.x[0], self.bank.x[3], 0]
+
         #elems.append(ax.text(0.5, 9.0, "x:" + str(x[0]), fontsize=10))
         #elems.append(ax.text(0.5, 8.5, "y:" + str(x[1]), fontsize=10))
         #elems += ax.plot(x[0], x[2], color="blue", alpha=0.5, linewidth=0.5, marker='o')
-        
         self.estimated_poses.append(x)
         xs = [_x[0] for _x in self.estimated_poses]
         ys = [_x[1] for _x in self.estimated_poses]
@@ -192,7 +167,7 @@ if __name__ == '__main__':
             [100, 0.4, 0.0]]
     cmds = [[s, n, math.radians(o)] for s, n, o in cmds]
 
-    e = EstimatorUKF(m, dt, pose)
+    e = EstimatorIMME(m, dt, pose)
     a = EstimationAgent(dt, cmds, e)
     r = Robot(pose, sensor=AoA(m), agent=a, color="red") 
     
