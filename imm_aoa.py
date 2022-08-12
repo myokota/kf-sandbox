@@ -9,21 +9,21 @@ from robot_aoa import *
 from scipy.linalg import block_diag
 import numpy as np
 
-class EstimationAgent(Agent): 
+class EstimationAgent(Agent):
     def __init__(self, time_interval, cmds, estimator):
         super().__init__(0, 0)
         self.estimator = estimator
         self.time_interval = time_interval
-        
+
         self.prev_nu = 0
         self.prev_omega = 0
 
         self.cmds = cmds
         self.cmd_step = 0
-        
+
     # observasion: data from the sensors
     # self.{nu,omega}: movement
-    def decision(self, observation=None): 
+    def decision(self, observation=None):
         self.estimator.motion_update(self.prev_nu, self.prev_omega, self.time_interval)
 
         if len(self.cmds) == 0:
@@ -39,7 +39,7 @@ class EstimationAgent(Agent):
         self.prev_nu, self.prev_omega = nu, omega
         self.estimator.observation_update(observation)
         return nu, omega
-        
+
     def draw(self, ax, elems): ###mlwrite
         self.estimator.draw(ax, elems)
         #x, y, t = self.estimator.pose #以下追加
@@ -65,14 +65,14 @@ def line_cross_point(P0, P1, Q0, Q1):
 
 class EstimatorIMME:
     def __init__(self, envmap, dt, init_pose):
-        
-        r = 1
+
+        r =1.0
         ca = KalmanFilter(6, 2)
         dt2 = (dt**2)/2
         F = np.array([[1, dt, dt2],
                       [0,  1,  dt],
                       [0,  0,   1]])
-        
+
         ca.F = block_diag(F, F)
         #ca.x = np.array([init_pose[0], 0, 0, init_pose[1], -15, 0]).T
         ca.x = np.array([init_pose[0], 0, 0, init_pose[1], 0, 0]).T
@@ -84,12 +84,12 @@ class EstimatorIMME:
         ca.Q = block_diag(q, q)
         ca.H = np.array([[1, 0, 0, 0, 0, 0],
                          [0, 0, 0, 1, 0, 0]])
-        
+
         # プロセスノイズを持たない同じフィルタを作成する。
         cano = copy.deepcopy(ca)
         cano.Q *= 0
         filters = [ca, cano]
-        
+
         M = np.array([[0.97, 0.03],
                       [0.03, 0.97]])
         mu = np.array([0.5, 0.5])
@@ -100,25 +100,25 @@ class EstimatorIMME:
         self.estimated_poses = []
         self.antennas = envmap.antennas
 
-        
+
     def motion_update(self, nu, omega, time): #追加
         #値が0になるとゼロ割りになって計算ができないのでわずかに値を持たせる
-        if abs(omega) < 1e-5: 
+        if abs(omega) < 1e-5:
             omega = 1e-5
 
         self.bank.predict()
-        
+
         #  pose = [x, y, theta]
         pose = np.array([self.bank.x[0], self.bank.x[3], self.pose[2]]).T
         self.pose = IdealRobot.state_transition(nu, omega, time, pose)
-        
+
     def observation_update(self, observation):  #追加
         # observation[]: [(0, 角度), アンテナ位置, 観測ID]
         #    z = d[0][1] # d[0] = (0, theta)
         #    ant_pos = d[1]
         #    obs_id = d[2]
-        ant1 =observation[0] 
-        ant2 =observation[1] 
+        ant1 =observation[0]
+        ant2 =observation[1]
         z1 = ant1[0][1]
         z2 = ant2[0][1]
         a1 = math.tan(z1)
@@ -128,9 +128,9 @@ class EstimatorIMME:
         x1 = 10
         x2 = 0
         c = line_cross_point((p1[0], p1[1]), (x1, a1*x1+a1*-p1[0]+p1[1]),
-                             (p2[0], p2[1]), (x2, a2*x2+a2*-p2[0]+p2[1]))   
+                             (p2[0], p2[1]), (x2, a2*x2+a2*-p2[0]+p2[1]))
         self.bank.update([c[0], c[1]])
-        
+
     def draw(self, ax, elems):
         x = [self.bank.x[0], self.bank.x[3], 0]
 
@@ -147,17 +147,16 @@ class EstimatorIMME:
 
 # In[10]:
 
-if __name__ == '__main__': 
+if __name__ == '__main__':
     dt = 0.1
-    #world = World(60, dt, debug=True)  
+    #world = World(60, dt, debug=True)
     world = World(60, dt)
-    
-    m = Map()                                  
+
+    m = Map()
     m.append_antenna(Antenna(0.5, 0.5))
     m.append_antenna(Antenna(9.5, 0.5))
-    world.append(m)        
-    
-    pose = np.array([2, 2, 0])
+    world.append(m)
+
     # cmds = [[steps, nu, omega] * n]
     cmds = [[100, 0.4, 0.0],
             [100, 0.2, 10.0],
@@ -167,12 +166,14 @@ if __name__ == '__main__':
             [100, 0.4, 0.0]]
     cmds = [[s, n, math.radians(o)] for s, n, o in cmds]
 
-    e = EstimatorIMME(m, dt, pose)
+    estimator_pose = np.array([5, 5, 0])
+    robot_pose = np.array([2, 2, 0])
+    e = EstimatorIMME(m, dt, estimator_pose)
     a = EstimationAgent(dt, cmds, e)
-    r = Robot(pose, sensor=AoA(m), agent=a, color="red") 
-    
+    r = Robot(robot_pose, sensor=AoA(m), agent=a, color="red")
+
     world.append(r)
-                 
+
     ### アニメーション実行 ###
     world.draw()
 
